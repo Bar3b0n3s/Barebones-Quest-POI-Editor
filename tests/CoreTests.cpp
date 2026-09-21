@@ -96,8 +96,17 @@ int main()
         assert(!overlayDbc.empty());
         auto overlays = qpe::ParseWorldMapOverlays(overlayDbc);
         assert(!overlays.empty());
+        auto mapDbc = archives.Read("DBFilesClient\\Map.dbc", error);
+        assert(!mapDbc.empty());
+        auto maps = qpe::ParseMaps(mapDbc);
+        assert(!maps.empty());
+        auto areaDbc = archives.Read("DBFilesClient\\AreaTable.dbc", error);
+        assert(!areaDbc.empty());
+        auto clientAreas = qpe::ParseAreas(areaDbc);
+        assert(!clientAreas.empty());
         std::cout << "Client integration: " << archives.ArchiveCount() << " sources, "
-                  << areas.size() << " world-map areas, " << overlays.size() << " reveal overlays\n";
+                  << areas.size() << " world-map areas, " << overlays.size() << " reveal overlays, "
+                  << maps.size() << " named maps, " << clientAreas.size() << " named client areas\n";
 
         std::vector<qpe::RgbaImage> grizzlyTiles;
         for (int tile = 1; tile <= 12; ++tile)

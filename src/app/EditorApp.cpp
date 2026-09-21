@@ -365,17 +365,52 @@ void EditorApp::RenderPoiPanel()
             RecordUndo(before);
     };
     trackedScalar("Objective index", ImGuiDataType_S32, &poi.objectiveIndex);
-    trackedScalar("Map ID", ImGuiDataType_U32, &poi.mapId);
     auto previousArea = poi.worldMapAreaId;
     auto previousFloor = poi.floor;
-    trackedScalar("World map area", ImGuiDataType_U32, &poi.worldMapAreaId);
+
+    auto selectedMap = std::find_if(maps_.begin(), maps_.end(), [&poi](auto const& map) { return map.id == poi.mapId; });
+    auto mapPreview = selectedMap == maps_.end()
+        ? std::format("Unknown map ({})", poi.mapId)
+        : std::format("{} ({})", selectedMap->name, selectedMap->id);
+    if (ImGui::BeginCombo("Map", mapPreview.c_str()))
+    {
+        for (auto const& map : maps_)
+        {
+            auto const usedByWorldMap = std::ranges::any_of(areas_, [&map](auto const& area) { return area.mapId == map.id; });
+            if (!usedByWorldMap && map.id != poi.mapId)
+                continue;
+            auto label = std::format("{} ({})", map.name, map.id);
+            if (ImGui::Selectable(label.c_str(), map.id == poi.mapId) && map.id != poi.mapId)
+            {
+                RecordUndo(quest_);
+                poi.mapId = map.id;
+                auto matchingArea = std::find_if(areas_.begin(), areas_.end(), [&map](auto const& area) {
+                    return area.mapId == map.id;
+                });
+                if (matchingArea != areas_.end())
+                    poi.worldMapAreaId = matchingArea->id;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
     auto selectedArea = std::find_if(areas_.begin(), areas_.end(), [&poi](auto const& area) { return area.id == poi.worldMapAreaId; });
-    auto const preview = selectedArea == areas_.end() ? "Choose map..." : selectedArea->textureName.c_str();
-    if (ImGui::BeginCombo("Map texture", preview))
+    auto areaLabel = [this](WorldMapArea const& area) {
+        auto clientArea = std::find_if(clientAreas_.begin(), clientAreas_.end(), [&area](auto const& candidate) {
+            return candidate.id == area.areaId;
+        });
+        if (clientArea == clientAreas_.end())
+            return std::format("{} ({})", area.textureName, area.id);
+        return std::format("{} - {} ({})", clientArea->name, area.textureName, area.id);
+    };
+    auto areaPreview = selectedArea == areas_.end()
+        ? std::format("Unknown area ({})", poi.worldMapAreaId)
+        : areaLabel(*selectedArea);
+    if (ImGui::BeginCombo("World map area", areaPreview.c_str()))
     {
         for (auto const& area : areas_)
         {
-            auto label = std::format("{}  ({})", area.textureName, area.id);
+            auto label = areaLabel(area);
             if (ImGui::Selectable(label.c_str(), area.id == poi.worldMapAreaId) && area.id != poi.worldMapAreaId)
             {
                 RecordUndo(quest_);
@@ -560,7 +595,7 @@ void EditorApp::RenderCanvas()
     for (auto const& point : poi.points)
         screenPoints.push_back(CanvasPoint(origin, size, area->WorldToNormalized(point)));
 
-    auto const fill = IM_COL32(72, 190, 235, 75);
+    auto const fill = IM_COL32(30, 75, 155, 150);
     if (screenPoints.size() == 1)
         draw->AddCircleFilled(screenPoints[0], std::max(8.0f, size.x * 0.0125f), fill, 32);
     else if (screenPoints.size() >= 3)
@@ -569,8 +604,8 @@ void EditorApp::RenderCanvas()
     for (std::size_t index = 0; index < screenPoints.size(); ++index)
     {
         draw->AddCircleFilled(screenPoints[index], selectedPoint_ == static_cast<int>(index) ? 3.5f : 2.5f,
-            selectedPoint_ == static_cast<int>(index) ? IM_COL32(255, 220, 90, 255) : IM_COL32(225, 250, 255, 255));
-        draw->AddCircle(screenPoints[index], 4.5f, IM_COL32(20, 70, 90, 240), 16, 1.0f);
+            selectedPoint_ == static_cast<int>(index) ? IM_COL32(255, 105, 105, 255) : IM_COL32(225, 35, 45, 255));
+        draw->AddCircle(screenPoints[index], 4.5f, IM_COL32(90, 8, 16, 245), 16, 1.0f);
     }
     draw->PopClipRect();
 
@@ -918,6 +953,8 @@ void EditorApp::ApplySettings(bool connectDatabase)
     database_.Disconnect();
     areas_.clear();
     overlays_.clear();
+    maps_.clear();
+    clientAreas_.clear();
     std::string mapError;
     bool mapLoaded = archives_.Open(PathFromUtf8(settings_.clientPath), settings_.locale, mapError);
     if (mapLoaded)
@@ -934,6 +971,16 @@ void EditorApp::ApplySettings(bool connectDatabase)
             mapLoaded = !overlays_.empty();
             if (!mapLoaded && mapError.empty())
                 mapError = "WorldMapOverlay.dbc is missing or invalid";
+        }
+        if (mapLoaded)
+        {
+            auto mapDbc = archives_.Read("DBFilesClient\\Map.dbc", mapError);
+            maps_ = ParseMaps(mapDbc);
+            auto areaDbc = archives_.Read("DBFilesClient\\AreaTable.dbc", mapError);
+            clientAreas_ = ParseAreas(areaDbc);
+            mapLoaded = !maps_.empty() && !clientAreas_.empty();
+            if (!mapLoaded && mapError.empty())
+                mapError = "Map.dbc or AreaTable.dbc is missing or invalid";
         }
     }
 
@@ -959,11 +1006,11 @@ void EditorApp::ApplySettings(bool connectDatabase)
     if (mapLoaded && (!connectDatabase || (databaseConnected && questListLoaded)))
     {
         if (databaseConnected)
-            SetStatus(std::format("Loaded {} map definitions and {} reveal overlays, connected to database '{}', and loaded {} quests.",
-                areas_.size(), overlays_.size(), settings_.database.database, questList_.size()));
+            SetStatus(std::format("Loaded {} map definitions, {} named client areas, and {} reveal overlays; connected to database '{}' and loaded {} quests.",
+                areas_.size(), clientAreas_.size(), overlays_.size(), settings_.database.database, questList_.size()));
         else
-            SetStatus(std::format("Loaded {} map definitions and {} reveal overlays from {} MPQ/override sources.",
-                areas_.size(), overlays_.size(), archives_.ArchiveCount()));
+            SetStatus(std::format("Loaded {} map definitions, {} named client areas, and {} reveal overlays from {} MPQ/override sources.",
+                areas_.size(), clientAreas_.size(), overlays_.size(), archives_.ArchiveCount()));
         return;
     }
 
@@ -1118,8 +1165,7 @@ void EditorApp::RestoreQuest(Quest snapshot)
     pointDragActive_ = false;
     if (quest_.pois.empty())
     {
-        selectedPoi_ = -1;
-        selectedPoint_ = -1;
+        SelectPoi(-1);
         return;
     }
     selectedPoi_ = std::clamp(selectedPoi_, 0, static_cast<int>(quest_.pois.size() - 1));
@@ -1155,6 +1201,15 @@ void EditorApp::SelectPoi(int index)
     selectedPoi_ = index; selectedPoint_ = -1;
     if (index >= 0 && index < static_cast<int>(quest_.pois.size()))
         LoadMap(quest_.pois[index].worldMapAreaId, quest_.pois[index].floor);
+    else
+    {
+        loadedArea_ = 0;
+        loadedFloor_ = 0;
+        mapZoom_ = 1.0f;
+        mapPanX_ = 0.0f;
+        mapPanY_ = 0.0f;
+        ReleaseMapTexture();
+    }
 }
 
 bool EditorApp::LoadMap(std::uint32_t worldMapAreaId, std::uint32_t floor)

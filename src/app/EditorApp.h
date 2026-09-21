@@ -67,6 +67,8 @@ private:
     MpqArchiveSet archives_;
     std::vector<WorldMapArea> areas_;
     std::vector<WorldMapOverlay> overlays_;
+    std::vector<ClientMap> maps_;
+    std::vector<ClientArea> clientAreas_;
     Quest quest_;
     std::optional<Quest> cleanQuest_;
     std::vector<Quest> undoHistory_;

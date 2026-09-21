@@ -48,6 +48,19 @@ struct WorldMapOverlay
     std::int32_t offsetY = 0;
 };
 
+struct ClientMap
+{
+    std::uint32_t id = 0;
+    std::string directory;
+    std::string name;
+};
+
+struct ClientArea
+{
+    std::uint32_t id = 0;
+    std::string name;
+};
+
 class DbcReader
 {
 public:
@@ -71,6 +84,8 @@ private:
 
 [[nodiscard]] std::vector<WorldMapArea> ParseWorldMapAreas(std::span<std::uint8_t const> dbc);
 [[nodiscard]] std::vector<WorldMapOverlay> ParseWorldMapOverlays(std::span<std::uint8_t const> dbc);
+[[nodiscard]] std::vector<ClientMap> ParseMaps(std::span<std::uint8_t const> dbc);
+[[nodiscard]] std::vector<ClientArea> ParseAreas(std::span<std::uint8_t const> dbc);
 [[nodiscard]] RgbaImage StitchMapTiles(std::vector<RgbaImage> const& tiles);
 [[nodiscard]] RgbaImage StitchImageTiles(std::vector<RgbaImage> const& tiles,
     std::uint32_t width, std::uint32_t height);

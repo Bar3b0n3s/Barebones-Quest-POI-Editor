@@ -19,6 +19,15 @@ std::uint32_t ReadU32(std::span<std::uint8_t const> bytes, std::size_t offset)
            (static_cast<std::uint32_t>(bytes[offset + 2]) << 16) |
            (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
 }
+
+std::string FirstLocalizedString(DbcReader const& reader, std::uint32_t row,
+    std::uint32_t firstField, std::uint32_t count)
+{
+    for (std::uint32_t field = firstField; field < firstField + count; ++field)
+        if (auto value = reader.String(row, field); !value.empty())
+            return value;
+    return {};
+}
 }
 
 std::pair<float, float> WorldMapArea::WorldToNormalized(Point point) const
@@ -132,6 +141,45 @@ std::vector<WorldMapOverlay> ParseWorldMapOverlays(std::span<std::uint8_t const>
         overlay.offsetY = reader.Int(row, 12);
         if (!overlay.textureName.empty() && overlay.textureWidth > 0 && overlay.textureHeight > 0)
             result.push_back(std::move(overlay));
+    }
+    return result;
+}
+
+std::vector<ClientMap> ParseMaps(std::span<std::uint8_t const> dbc)
+{
+    DbcReader reader(dbc);
+    std::vector<ClientMap> result;
+    if (!reader.Valid() || reader.FieldCount() < 66)
+        return result;
+    result.reserve(reader.RecordCount());
+    for (std::uint32_t row = 0; row < reader.RecordCount(); ++row)
+    {
+        ClientMap map;
+        map.id = reader.Uint(row, 0);
+        map.directory = reader.String(row, 1);
+        map.name = FirstLocalizedString(reader, row, 5, 16);
+        if (map.name.empty())
+            map.name = map.directory;
+        if (!map.name.empty())
+            result.push_back(std::move(map));
+    }
+    return result;
+}
+
+std::vector<ClientArea> ParseAreas(std::span<std::uint8_t const> dbc)
+{
+    DbcReader reader(dbc);
+    std::vector<ClientArea> result;
+    if (!reader.Valid() || reader.FieldCount() < 36)
+        return result;
+    result.reserve(reader.RecordCount());
+    for (std::uint32_t row = 0; row < reader.RecordCount(); ++row)
+    {
+        ClientArea area;
+        area.id = reader.Uint(row, 0);
+        area.name = FirstLocalizedString(reader, row, 11, 16);
+        if (!area.name.empty())
+            result.push_back(std::move(area));
     }
     return result;
 }

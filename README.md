@@ -11,6 +11,7 @@ A focused Windows and Linux editor for the `quest_poi` and `quest_poi_points` ta
 - Load a quest and its map automatically by selecting it in the browser.
 - Reconstruct the fully revealed map by alpha-blending the client-defined subzone overlays over its fogged base tiles.
 - Add, delete, and configure POIs and their ordered points.
+- Choose named maps and world-map areas from client-data dropdowns while preserving the original numeric POI flag value.
 - Left-click to add points, drag points to move them, and right-click points to remove them.
 - Display a single point as a translucent blue marker and three or more points as a filled area.
 - Zoom toward the mouse pointer with the wheel and pan with the middle mouse button.
