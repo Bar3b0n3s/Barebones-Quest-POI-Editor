@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Barebones Quest POI Editor
+Comment=Edit TrinityCore 3.3.5a quest POI data
+Exec=QuestPoiEditor
+Icon=barebones-quest-poi-editor
+Terminal=false
+Categories=Development;Database;
