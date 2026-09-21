@@ -9,6 +9,7 @@ A focused Windows and Linux editor for the `quest_poi` and `quest_poi_points` ta
 - Browse every quest in the connected world database.
 - Fuzzy-search quests by name and ID, with ascending or descending ID order.
 - Load a quest and its map automatically by selecting it in the browser.
+- Reconstruct the fully revealed map by alpha-blending the client-defined subzone overlays over its fogged base tiles.
 - Add, delete, and configure POIs and their ordered points.
 - Left-click to add points, drag points to move them, and right-click points to remove them.
 - Display a single point as a translucent blue marker and three or more points as a filled area.

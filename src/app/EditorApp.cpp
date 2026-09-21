@@ -916,6 +916,8 @@ void EditorApp::SaveSettings()
 void EditorApp::ApplySettings(bool connectDatabase)
 {
     database_.Disconnect();
+    areas_.clear();
+    overlays_.clear();
     std::string mapError;
     bool mapLoaded = archives_.Open(PathFromUtf8(settings_.clientPath), settings_.locale, mapError);
     if (mapLoaded)
@@ -925,6 +927,14 @@ void EditorApp::ApplySettings(bool connectDatabase)
         mapLoaded = !areas_.empty();
         if (!mapLoaded && mapError.empty())
             mapError = "WorldMapArea.dbc is missing or invalid";
+        if (mapLoaded)
+        {
+            auto overlayDbc = archives_.Read("DBFilesClient\\WorldMapOverlay.dbc", mapError);
+            overlays_ = ParseWorldMapOverlays(overlayDbc);
+            mapLoaded = !overlays_.empty();
+            if (!mapLoaded && mapError.empty())
+                mapError = "WorldMapOverlay.dbc is missing or invalid";
+        }
     }
 
     bool databaseConnected = false;
@@ -949,10 +959,11 @@ void EditorApp::ApplySettings(bool connectDatabase)
     if (mapLoaded && (!connectDatabase || (databaseConnected && questListLoaded)))
     {
         if (databaseConnected)
-            SetStatus(std::format("Loaded {} map definitions, connected to database '{}', and loaded {} quests.",
-                areas_.size(), settings_.database.database, questList_.size()));
+            SetStatus(std::format("Loaded {} map definitions and {} reveal overlays, connected to database '{}', and loaded {} quests.",
+                areas_.size(), overlays_.size(), settings_.database.database, questList_.size()));
         else
-            SetStatus(std::format("Loaded {} map definitions from {} MPQ/override sources.", areas_.size(), archives_.ArchiveCount()));
+            SetStatus(std::format("Loaded {} map definitions and {} reveal overlays from {} MPQ/override sources.",
+                areas_.size(), overlays_.size(), archives_.ArchiveCount()));
         return;
     }
 
@@ -1185,6 +1196,58 @@ bool EditorApp::LoadMap(std::uint32_t worldMapAreaId, std::uint32_t floor)
         }
     }
     auto stitched = StitchMapTiles(tiles);
+    std::size_t loadedOverlays = 0;
+    std::size_t skippedOverlays = 0;
+    std::string overlayError;
+    auto const folder = "Interface\\WorldMap\\" + found->textureName + "\\";
+    for (auto const& overlay : overlays_)
+    {
+        if (overlay.mapAreaId != worldMapAreaId)
+            continue;
+        constexpr std::uint32_t tileSize = 256;
+        auto const columns = (overlay.textureWidth + tileSize - 1) / tileSize;
+        auto const rows = (overlay.textureHeight + tileSize - 1) / tileSize;
+        auto const tileCount = static_cast<std::size_t>(columns) * rows;
+        if (tileCount == 0 || tileCount > 1024)
+        {
+            ++skippedOverlays;
+            continue;
+        }
+
+        std::vector<RgbaImage> overlayTiles(tileCount);
+        bool complete = true;
+        for (std::size_t index = 1; index <= tileCount; ++index)
+        {
+            auto const path = folder + overlay.textureName + std::to_string(index) + ".blp";
+            auto bytes = archives_.Read(path, overlayError);
+            if (bytes.empty())
+            {
+                complete = false;
+                break;
+            }
+            std::string decodeError;
+            overlayTiles[index - 1] = DecodeBlp(bytes, decodeError);
+            if (overlayTiles[index - 1].Empty())
+            {
+                overlayError = decodeError;
+                complete = false;
+                break;
+            }
+        }
+        if (!complete)
+        {
+            ++skippedOverlays;
+            continue;
+        }
+        auto image = StitchImageTiles(overlayTiles, overlay.textureWidth, overlay.textureHeight);
+        if (image.Empty())
+        {
+            ++skippedOverlays;
+            continue;
+        }
+        AlphaComposite(stitched, image, overlay.offsetX, overlay.offsetY);
+        ++loadedOverlays;
+    }
     if (!UploadMap(stitched))
     {
         SetStatus("OpenGL could not create the stitched map texture.", true); return false;
@@ -1193,7 +1256,12 @@ bool EditorApp::LoadMap(std::uint32_t worldMapAreaId, std::uint32_t floor)
     mapZoom_ = 1.0f;
     mapPanX_ = 0.0f;
     mapPanY_ = 0.0f;
-    SetStatus(std::format("Loaded {} (WorldMapAreaId {}, floor {}).", found->textureName, worldMapAreaId, floor));
+    if (skippedOverlays > 0)
+        SetStatus(std::format("Loaded {} with {}/{} reveal overlays; the last overlay error was: {}",
+            found->textureName, loadedOverlays, loadedOverlays + skippedOverlays, overlayError), true);
+    else
+        SetStatus(std::format("Loaded {} with {} reveal overlay(s) (WorldMapAreaId {}, floor {}).",
+            found->textureName, loadedOverlays, worldMapAreaId, floor));
     return true;
 }
 

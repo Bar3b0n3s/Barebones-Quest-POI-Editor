@@ -2,6 +2,7 @@
 
 #include "Models.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -35,6 +36,18 @@ struct WorldMapArea
     [[nodiscard]] Point NormalizedToWorld(float x, float y) const;
 };
 
+struct WorldMapOverlay
+{
+    std::uint32_t id = 0;
+    std::uint32_t mapAreaId = 0;
+    std::array<std::uint32_t, 4> areaIds {};
+    std::string textureName;
+    std::uint32_t textureWidth = 0;
+    std::uint32_t textureHeight = 0;
+    std::int32_t offsetX = 0;
+    std::int32_t offsetY = 0;
+};
+
 class DbcReader
 {
 public:
@@ -57,6 +70,9 @@ private:
 };
 
 [[nodiscard]] std::vector<WorldMapArea> ParseWorldMapAreas(std::span<std::uint8_t const> dbc);
+[[nodiscard]] std::vector<WorldMapOverlay> ParseWorldMapOverlays(std::span<std::uint8_t const> dbc);
 [[nodiscard]] RgbaImage StitchMapTiles(std::vector<RgbaImage> const& tiles);
+[[nodiscard]] RgbaImage StitchImageTiles(std::vector<RgbaImage> const& tiles,
+    std::uint32_t width, std::uint32_t height);
+void AlphaComposite(RgbaImage& destination, RgbaImage const& source, std::int32_t offsetX, std::int32_t offsetY);
 }
-

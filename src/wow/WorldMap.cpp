@@ -1,5 +1,6 @@
 #include "wow/WorldMap.h"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -110,32 +111,103 @@ std::vector<WorldMapArea> ParseWorldMapAreas(std::span<std::uint8_t const> dbc)
     return result;
 }
 
-RgbaImage StitchMapTiles(std::vector<RgbaImage> const& tiles)
+std::vector<WorldMapOverlay> ParseWorldMapOverlays(std::span<std::uint8_t const> dbc)
 {
-    constexpr std::uint32_t columns = 4;
-    constexpr std::uint32_t rows = 3;
+    DbcReader reader(dbc);
+    std::vector<WorldMapOverlay> result;
+    if (!reader.Valid() || reader.FieldCount() < 17)
+        return result;
+    result.reserve(reader.RecordCount());
+    for (std::uint32_t row = 0; row < reader.RecordCount(); ++row)
+    {
+        WorldMapOverlay overlay;
+        overlay.id = reader.Uint(row, 0);
+        overlay.mapAreaId = reader.Uint(row, 1);
+        for (std::size_t index = 0; index < overlay.areaIds.size(); ++index)
+            overlay.areaIds[index] = reader.Uint(row, static_cast<std::uint32_t>(2 + index));
+        overlay.textureName = reader.String(row, 8);
+        overlay.textureWidth = reader.Uint(row, 9);
+        overlay.textureHeight = reader.Uint(row, 10);
+        overlay.offsetX = reader.Int(row, 11);
+        overlay.offsetY = reader.Int(row, 12);
+        if (!overlay.textureName.empty() && overlay.textureWidth > 0 && overlay.textureHeight > 0)
+            result.push_back(std::move(overlay));
+    }
+    return result;
+}
+
+RgbaImage StitchImageTiles(std::vector<RgbaImage> const& tiles, std::uint32_t width, std::uint32_t height)
+{
     constexpr std::uint32_t tileSize = 256;
-    // The client lays twelve 256x256 textures on a 1002x668 canvas. The final
-    // column and row are clipped by the FrameXML, so crop the padded texels too.
-    RgbaImage output { 1002, 668 };
-    output.pixels.assign(static_cast<std::size_t>(output.width) * output.height * 4, 0);
-    for (std::size_t index = 0; index < tiles.size() && index < columns * rows; ++index)
+    if (width == 0 || height == 0 || width > 8192 || height > 8192)
+        return {};
+    auto const columns = (width + tileSize - 1) / tileSize;
+    auto const rows = (height + tileSize - 1) / tileSize;
+    if (columns == 0 || rows == 0 || static_cast<std::uint64_t>(columns) * rows > 1024)
+        return {};
+
+    RgbaImage output { width, height };
+    output.pixels.assign(static_cast<std::size_t>(width) * height * 4, 0);
+    for (std::size_t index = 0; index < tiles.size() && index < static_cast<std::size_t>(columns) * rows; ++index)
     {
         auto const& tile = tiles[index];
         if (tile.Empty())
             continue;
         auto const dstX = static_cast<std::uint32_t>(index % columns) * tileSize;
         auto const dstY = static_cast<std::uint32_t>(index / columns) * tileSize;
-        auto const copyWidth = std::min({ tile.width, tileSize, output.width - dstX });
-        auto const copyHeight = std::min({ tile.height, tileSize, output.height - dstY });
+        auto const copyWidth = std::min({ tile.width, tileSize, width - dstX });
+        auto const copyHeight = std::min({ tile.height, tileSize, height - dstY });
         for (std::uint32_t y = 0; y < copyHeight; ++y)
         {
             auto const* source = tile.pixels.data() + static_cast<std::size_t>(y) * tile.width * 4;
             auto* destination = output.pixels.data() +
-                (static_cast<std::size_t>(dstY + y) * output.width + dstX) * 4;
+                (static_cast<std::size_t>(dstY + y) * width + dstX) * 4;
             std::memcpy(destination, source, static_cast<std::size_t>(copyWidth) * 4);
         }
     }
     return output;
+}
+
+void AlphaComposite(RgbaImage& destination, RgbaImage const& source, std::int32_t offsetX, std::int32_t offsetY)
+{
+    if (destination.Empty() || source.Empty())
+        return;
+    for (std::uint32_t sourceY = 0; sourceY < source.height; ++sourceY)
+    {
+        auto const destinationY = static_cast<std::int64_t>(offsetY) + sourceY;
+        if (destinationY < 0 || destinationY >= destination.height)
+            continue;
+        for (std::uint32_t sourceX = 0; sourceX < source.width; ++sourceX)
+        {
+            auto const destinationX = static_cast<std::int64_t>(offsetX) + sourceX;
+            if (destinationX < 0 || destinationX >= destination.width)
+                continue;
+            auto const sourceAt = (static_cast<std::size_t>(sourceY) * source.width + sourceX) * 4;
+            auto const destinationAt = (static_cast<std::size_t>(destinationY) * destination.width +
+                static_cast<std::size_t>(destinationX)) * 4;
+            auto const sourceAlpha = static_cast<std::uint32_t>(source.pixels[sourceAt + 3]);
+            if (sourceAlpha == 0)
+                continue;
+            auto const inverseAlpha = 255u - sourceAlpha;
+            auto const destinationAlpha = static_cast<std::uint32_t>(destination.pixels[destinationAt + 3]);
+            auto const outputAlpha = sourceAlpha + (destinationAlpha * inverseAlpha + 127u) / 255u;
+            for (std::size_t channel = 0; channel < 3; ++channel)
+            {
+                auto const sourcePremultiplied = static_cast<std::uint32_t>(source.pixels[sourceAt + channel]) * sourceAlpha;
+                auto const destinationPremultiplied = static_cast<std::uint32_t>(destination.pixels[destinationAt + channel]) *
+                    destinationAlpha * inverseAlpha / 255u;
+                destination.pixels[destinationAt + channel] = outputAlpha == 0 ? 0 :
+                    static_cast<std::uint8_t>((sourcePremultiplied + destinationPremultiplied + outputAlpha / 2u) / outputAlpha);
+            }
+            destination.pixels[destinationAt + 3] = static_cast<std::uint8_t>(outputAlpha);
+        }
+    }
+}
+
+RgbaImage StitchMapTiles(std::vector<RgbaImage> const& tiles)
+{
+    // The client lays twelve 256x256 textures on a 1002x668 canvas. The final
+    // column and row are clipped by the FrameXML, so crop the padded texels too.
+    return StitchImageTiles(tiles, 1002, 668);
 }
 }
