@@ -400,4 +400,12 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 /dist
-/packaging
+
+# Downloaded/build-time dependencies restored by the bootstrap scripts.
+/vendor/imgui/
+/vendor/glfw/
+/tools/StormLib/
+/tools/premake/
+
+# Generated StormLib build tree.
+/tools/StormLib-build/

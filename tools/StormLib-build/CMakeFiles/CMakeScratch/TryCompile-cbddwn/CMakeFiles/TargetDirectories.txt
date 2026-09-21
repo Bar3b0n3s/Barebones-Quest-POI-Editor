@@ -1,3 +1,0 @@
-E:/Barebones' Quest POI Editor/tools/StormLib-build/CMakeFiles/CMakeScratch/TryCompile-cbddwn/CMakeFiles/cmTC_68385.dir
-E:/Barebones' Quest POI Editor/tools/StormLib-build/CMakeFiles/CMakeScratch/TryCompile-cbddwn/CMakeFiles/edit_cache.dir
-E:/Barebones' Quest POI Editor/tools/StormLib-build/CMakeFiles/CMakeScratch/TryCompile-cbddwn/CMakeFiles/rebuild_cache.dir
