@@ -78,13 +78,69 @@ void SetWindowIcon(GLFWwindow* window, std::filesystem::path const& executableDi
     stbi_image_free(pixels);
 }
 
-void LoadFont(std::filesystem::path const& executableDirectory, float scale)
+void LoadFont(std::filesystem::path const& executableDirectory)
 {
     auto& io = ImGui::GetIO();
     auto const fontPath = executableDirectory / "AtkinsonHyperlegibleNext-Medium.ttf";
     if (!std::filesystem::is_regular_file(fontPath) ||
-        !io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 17.0f * scale))
+        !io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 24.0f))
         io.Fonts->AddFontDefault();
+}
+
+GLFWmonitor* MonitorForWindow(GLFWwindow* window)
+{
+    int windowX = 0, windowY = 0, windowWidth = 0, windowHeight = 0;
+    glfwGetWindowPos(window, &windowX, &windowY);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    int monitorCount = 0;
+    auto** monitors = glfwGetMonitors(&monitorCount);
+    GLFWmonitor* best = glfwGetPrimaryMonitor();
+    int bestArea = -1;
+    for (int index = 0; index < monitorCount; ++index)
+    {
+        int monitorX = 0, monitorY = 0, monitorWidth = 0, monitorHeight = 0;
+        glfwGetMonitorWorkarea(monitors[index], &monitorX, &monitorY, &monitorWidth, &monitorHeight);
+        auto const overlapWidth = std::max(0, std::min(windowX + windowWidth, monitorX + monitorWidth) - std::max(windowX, monitorX));
+        auto const overlapHeight = std::max(0, std::min(windowY + windowHeight, monitorY + monitorHeight) - std::max(windowY, monitorY));
+        auto const overlapArea = overlapWidth * overlapHeight;
+        if (overlapArea > bestArea)
+        {
+            bestArea = overlapArea;
+            best = monitors[index];
+        }
+    }
+    return best;
+}
+
+std::pair<int, int> ResizeAndCenterWindow(GLFWwindow* window, int requestedWidth, int requestedHeight)
+{
+    auto* monitor = MonitorForWindow(window);
+    int workX = 0, workY = 0, workWidth = requestedWidth, workHeight = requestedHeight;
+    glfwGetMonitorWorkarea(monitor, &workX, &workY, &workWidth, &workHeight);
+    float scaleX = 1.0f, scaleY = 1.0f;
+    glfwGetMonitorContentScale(monitor, &scaleX, &scaleY);
+    int frameLeft = 0, frameTop = 0, frameRight = 0, frameBottom = 0;
+    glfwGetWindowFrameSize(window, &frameLeft, &frameTop, &frameRight, &frameBottom);
+
+    auto const maximumWidth = std::max(1, static_cast<int>((workWidth - frameLeft - frameRight) * scaleX));
+    auto const maximumHeight = std::max(1, static_cast<int>((workHeight - frameTop - frameBottom) * scaleY));
+    auto const minimumWidth = std::min(1280, maximumWidth);
+    auto const minimumHeight = std::min(720, maximumHeight);
+    auto const targetWidth = std::clamp(requestedWidth, minimumWidth, maximumWidth);
+    auto const targetHeight = std::clamp(requestedHeight, minimumHeight, maximumHeight);
+
+    glfwSetWindowSize(window, targetWidth, targetHeight);
+    int windowWidth = 0, windowHeight = 0;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    auto const outerWidth = windowWidth + frameLeft + frameRight;
+    auto const outerHeight = windowHeight + frameTop + frameBottom;
+    auto const centeredX = workX + frameLeft + std::max(0, (workWidth - outerWidth) / 2);
+    auto const centeredY = workY + frameTop + std::max(0, (workHeight - outerHeight) / 2);
+    glfwSetWindowPos(window, centeredX, centeredY);
+
+    int framebufferWidth = 0, framebufferHeight = 0;
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    return { framebufferWidth, framebufferHeight };
 }
 
 int RunEditor()
@@ -123,17 +179,20 @@ int RunEditor()
     ImGui::CreateContext();
     auto& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigDpiScaleFonts = true;
     io.IniFilename = nullptr;
     float scaleX = 1.0f, scaleY = 1.0f;
     glfwGetWindowContentScale(window, &scaleX, &scaleY);
     auto const interfaceScale = std::clamp(std::max(scaleX, scaleY), 1.0f, 2.5f);
-    LoadFont(executableDirectory, interfaceScale);
+    LoadFont(executableDirectory);
     ApplyTheme(interfaceScale);
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
     {
-        qpe::EditorApp app;
+        qpe::EditorApp app([window](int width, int height) {
+            return ResizeAndCenterWindow(window, width, height);
+        });
         while (!app.ExitReady())
         {
             glfwPollEvents();

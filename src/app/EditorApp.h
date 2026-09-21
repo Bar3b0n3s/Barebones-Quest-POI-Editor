@@ -6,14 +6,16 @@
 #include "wow/WorldMap.h"
 
 #include <array>
+#include <functional>
 #include <optional>
+#include <utility>
 
 namespace qpe
 {
 class EditorApp
 {
 public:
-    EditorApp();
+    explicit EditorApp(std::function<std::pair<int, int>(int, int)> resizeWindow = {});
     ~EditorApp();
     void Render();
     void RequestExit();
@@ -97,6 +99,10 @@ private:
     std::array<char, 128> dbPassword_ {};
     std::array<char, 128> dbName_ {};
     int dbPort_ = 3306;
+    int fontSize_ = 14;
+    int windowWidth_ = 1600;
+    int windowHeight_ = 900;
+    std::function<std::pair<int, int>(int, int)> resizeWindow_;
     bool questIdAscending_ = true;
 };
 }

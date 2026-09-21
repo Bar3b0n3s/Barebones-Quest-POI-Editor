@@ -18,6 +18,8 @@ A focused Windows and Linux editor for the `quest_poi` and `quest_poi_points` ta
 - Read stock MPQs and unpacked `.MPQ` override directories with patch precedence.
 - Decode the paletted, DXT1, DXT3, and DXT5 BLP variants used by 3.3.5a world maps.
 - Use the same OpenGL renderer, high-DPI interface, application icon, and Atkinson Hyperlegible Next font on Windows and Linux.
+- Use a 14 px default interface font, adjustable from 14 to 64 px in Settings.
+- Choose a standard application-window size from 1280 x 720 through 3840 x 2160, automatically fit it to the current display's work area, center it, and restore it at startup.
 
 ## Requirements
 
@@ -62,7 +64,8 @@ bash scripts/build-linux.sh Release
 2. Choose the WoW folder that contains the `Data` directory.
 3. Enter the locale folder, such as `enUS`.
 4. Enter the world-database host, port, user, password, and schema name.
-5. Choose **Connect**. Client maps and the quest list load together.
+5. Adjust **Font size** or apply a different **Window size** under Appearance if desired.
+6. Choose **Connect**. Client maps and the quest list load together.
 
 The password is retained in memory only. The client path and non-secret connection fields are stored in `%APPDATA%\BarebonesQuestPoiEditor\settings.ini` on Windows and `$XDG_CONFIG_HOME/barebones-quest-poi-editor/settings.ini` (normally `~/.config/barebones-quest-poi-editor/settings.ini`) on Linux.
 

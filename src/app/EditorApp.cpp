@@ -24,6 +24,7 @@
 #include <format>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace qpe
 {
@@ -38,6 +39,8 @@ void Copy(std::array<char, N>& destination, std::string const& source)
 
 std::filesystem::path SettingsPath()
 {
+    if (auto const* overridePath = std::getenv("QPE_SETTINGS_PATH"); overridePath && *overridePath)
+        return std::filesystem::path(overridePath);
 #if defined(_WIN32)
     wchar_t* appData = nullptr;
     std::filesystem::path path;
@@ -183,9 +186,18 @@ bool FuzzyMatches(std::string const& text, std::string const& filter)
 }
 }
 
-EditorApp::EditorApp()
+EditorApp::EditorApp(std::function<std::pair<int, int>(int, int)> resizeWindow) : resizeWindow_(std::move(resizeWindow))
 {
     LoadSettings();
+    auto& style = ImGui::GetStyle();
+    style.FontSizeBase = 24.0f;
+    style.FontScaleMain = static_cast<float>(fontSize_) / 24.0f;
+    if (resizeWindow_)
+    {
+        auto const [width, height] = resizeWindow_(windowWidth_, windowHeight_);
+        windowWidth_ = width;
+        windowHeight_ = height;
+    }
     if (settings_.clientPath.empty())
         settingsOpen_ = true;
     else
@@ -209,18 +221,20 @@ void EditorApp::Render()
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::Begin("Quest POI Editor", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     RenderToolbar();
     ImGui::Separator();
     auto const available = ImGui::GetContentRegionAvail();
-    auto const workspaceHeight = std::max(1.0f, available.y - 28.0f);
+    auto const statusHeight = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().CellPadding.y * 2.0f;
+    auto const workspaceHeight = std::max(1.0f, available.y - statusHeight);
     if (ImGui::BeginTable("Workspace", 3,
         ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp,
         { 0.0f, workspaceHeight }))
     {
-        ImGui::TableSetupColumn("Quest browser", ImGuiTableColumnFlags_WidthFixed, 310.0f);
+        ImGui::TableSetupColumn("Quest browser", ImGuiTableColumnFlags_WidthFixed, 400.0f);
         ImGui::TableSetupColumn("Map", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Loaded quest", ImGuiTableColumnFlags_WidthFixed, 340.0f);
+        ImGui::TableSetupColumn("Loaded quest", ImGuiTableColumnFlags_WidthFixed, 460.0f);
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
@@ -241,7 +255,7 @@ void EditorApp::Render()
     }
     if (ImGui::BeginTable("Status bar", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
     {
-        ImGui::TableSetupColumn("Connection", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+        ImGui::TableSetupColumn("Connection", ImGuiTableColumnFlags_WidthFixed, 280.0f);
         ImGui::TableSetupColumn("Updates", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
@@ -615,22 +629,96 @@ void EditorApp::RenderSettings()
     if (!settingsOpen_)
         return;
     ImGui::OpenPopup("Settings");
-    ImGui::SetNextWindowSize({ 650, 0 }, ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("Settings", &settingsOpen_, ImGuiWindowFlags_AlwaysAutoResize))
+    auto const* viewport = ImGui::GetMainViewport();
+    auto const margin = 32.0f;
+    auto const maximumWidth = std::max(1.0f, viewport->WorkSize.x - margin);
+    auto const maximumHeight = std::max(1.0f, viewport->WorkSize.y - margin);
+    auto const fontScale = std::max(0.75f, ImGui::GetStyle().FontScaleMain);
+    auto const naturalWidth = std::max(720.0f, 900.0f * fontScale);
+    auto const naturalHeight = std::max(520.0f, 650.0f * fontScale);
+    auto const settingsWidth = std::min(naturalWidth, maximumWidth);
+    auto const settingsHeight = std::min(naturalHeight, maximumHeight);
+    ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_Always, { 0.5f, 0.5f });
+    ImGui::SetNextWindowSize({ settingsWidth, settingsHeight }, ImGuiCond_Always);
+    if (ImGui::BeginPopupModal("Settings", &settingsOpen_, ImGuiWindowFlags_NoResize))
     {
         ImGui::SeparatorText("WoW 3.3.5a client");
-        ImGui::SetNextItemWidth(500); ImGui::InputText("Client folder", clientPath_.data(), clientPath_.size());
+        ImGui::TextUnformatted("Client folder");
+        auto const browseWidth = ImGui::CalcTextSize("Browse...").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - browseWidth - ImGui::GetStyle().ItemSpacing.x));
+        ImGui::InputText("##Client folder", clientPath_.data(), clientPath_.size());
         ImGui::SameLine();
         if (ImGui::Button("Browse..."))
             if (auto path = PickFolder())
                 Copy(clientPath_, Utf8(*path));
-        ImGui::SetNextItemWidth(100); ImGui::InputText("Locale", locale_.data(), locale_.size());
+        ImGui::SetNextItemWidth(120); ImGui::InputText("Locale", locale_.data(), locale_.size());
+        ImGui::SeparatorText("Appearance");
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::SliderInt("Font size", &fontSize_, 14, 64, "%d px"))
+        {
+            fontSize_ = std::clamp(fontSize_, 14, 64);
+            settings_.fontSize = fontSize_;
+            ImGui::GetStyle().FontScaleMain = static_cast<float>(fontSize_) / 24.0f;
+            SaveSettings();
+        }
+        ImGui::TextDisabled("The font size updates immediately and is saved automatically.");
+        ImGui::TextDisabled("Current rendered text height: %.0f px (including display scaling).", ImGui::GetFontSize());
+        struct WindowSizePreset { int width; int height; char const* label; };
+        static constexpr WindowSizePreset windowSizes[] {
+            { 1280, 720, "1280 x 720 (HD)" },
+            { 1366, 768, "1366 x 768" },
+            { 1440, 900, "1440 x 900" },
+            { 1600, 900, "1600 x 900" },
+            { 1680, 1050, "1680 x 1050" },
+            { 1920, 1080, "1920 x 1080 (Full HD)" },
+            { 1920, 1200, "1920 x 1200" },
+            { 2560, 1440, "2560 x 1440 (QHD)" },
+            { 3840, 2160, "3840 x 2160 (4K UHD)" }
+        };
+        auto const selectedSize = std::find_if(std::begin(windowSizes), std::end(windowSizes), [this](auto const& size) {
+            return size.width == windowWidth_ && size.height == windowHeight_;
+        });
+        auto const customSize = std::format("{} x {} (custom)", windowWidth_, windowHeight_);
+        auto const* sizePreview = selectedSize != std::end(windowSizes) ? selectedSize->label : customSize.c_str();
+        ImGui::SetNextItemWidth(300);
+        if (ImGui::BeginCombo("Window size", sizePreview))
+        {
+            for (auto const& size : windowSizes)
+            {
+                auto const selected = size.width == windowWidth_ && size.height == windowHeight_;
+                if (ImGui::Selectable(size.label, selected))
+                {
+                    windowWidth_ = size.width;
+                    windowHeight_ = size.height;
+                    settings_.windowWidth = windowWidth_;
+                    settings_.windowHeight = windowHeight_;
+                    if (resizeWindow_)
+                    {
+                        auto const requestedWidth = windowWidth_;
+                        auto const requestedHeight = windowHeight_;
+                        auto const [width, height] = resizeWindow_(requestedWidth, requestedHeight);
+                        windowWidth_ = width;
+                        windowHeight_ = height;
+                        settings_.windowWidth = width;
+                        settings_.windowHeight = height;
+                        if (width != requestedWidth || height != requestedHeight)
+                            SetStatus(std::format("Window limited to {} x {} to fit the current display.", width, height));
+                    }
+                    SaveSettings();
+                }
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled("The selected window size applies immediately and is restored at startup.");
+        ImGui::TextDisabled("Windowed mode keeps the monitor resolution unchanged; OpenGL follows the client size.");
         ImGui::SeparatorText("World database");
-        ImGui::SetNextItemWidth(220); ImGui::InputText("Host", dbHost_.data(), dbHost_.size());
-        ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::InputInt("Port", &dbPort_);
-        ImGui::SetNextItemWidth(220); ImGui::InputText("User", dbUser_.data(), dbUser_.size());
-        ImGui::SetNextItemWidth(220); ImGui::InputText("Password", dbPassword_.data(), dbPassword_.size(), ImGuiInputTextFlags_Password);
-        ImGui::SetNextItemWidth(220); ImGui::InputText("Database", dbName_.data(), dbName_.size());
+        ImGui::SetNextItemWidth(std::min(360.0f, ImGui::GetContentRegionAvail().x * 0.7f)); ImGui::InputText("Host", dbHost_.data(), dbHost_.size());
+        ImGui::SetNextItemWidth(120); ImGui::InputInt("Port", &dbPort_);
+        ImGui::SetNextItemWidth(std::min(360.0f, ImGui::GetContentRegionAvail().x * 0.7f)); ImGui::InputText("User", dbUser_.data(), dbUser_.size());
+        ImGui::SetNextItemWidth(std::min(360.0f, ImGui::GetContentRegionAvail().x * 0.7f)); ImGui::InputText("Password", dbPassword_.data(), dbPassword_.size(), ImGuiInputTextFlags_Password);
+        ImGui::SetNextItemWidth(std::min(360.0f, ImGui::GetContentRegionAvail().x * 0.7f)); ImGui::InputText("Database", dbName_.data(), dbName_.size());
         ImGui::TextDisabled("The password is kept in memory only and is never written to settings.ini.");
         if (database_.IsConnected())
             ImGui::TextColored({ 0.35f, 0.9f, 0.5f, 1.0f }, "Connected to the world database");
@@ -668,12 +756,13 @@ void EditorApp::RenderInfo()
     if (!infoOpen_)
         return;
     ImGui::OpenPopup("How to use the Quest POI Editor");
-    ImGui::SetNextWindowSize({ 650.0f, 0.0f }, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize({ 900.0f, 0.0f }, ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("How to use the Quest POI Editor", &infoOpen_, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::SeparatorText("Get started");
         ImGui::BulletText("Open Settings, choose the WoW 3.3.5a client folder, and enter the world database details.");
         ImGui::BulletText("Connect loads the client maps and connects to the database. Disconnect is also available in Settings.");
+        ImGui::BulletText("The Appearance section changes the font size and saved application-window size.");
 
         ImGui::SeparatorText("Find and load a quest");
         ImGui::BulletText("Use the left-side name and ID fields to fuzzy-search the quest list.");
@@ -707,7 +796,7 @@ void EditorApp::RenderSaveConfirmation()
     if (!saveConfirmationOpen_)
         return;
     ImGui::OpenPopup("Confirm database save");
-    ImGui::SetNextWindowSize({ 540.0f, 0.0f }, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize({ 780.0f, 0.0f }, ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Confirm database save", &saveConfirmationOpen_, ImGuiWindowFlags_AlwaysAutoResize))
     {
         std::size_t pointCount = 0;
@@ -743,7 +832,7 @@ void EditorApp::RenderUnsavedChanges()
     if (!unsavedPromptOpen_)
         return;
     ImGui::OpenPopup("Unsaved quest changes");
-    ImGui::SetNextWindowSize({ 560.0f, 0.0f }, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize({ 800.0f, 0.0f }, ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Unsaved quest changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         char const* action = "continue";
@@ -794,6 +883,9 @@ void EditorApp::LoadSettings()
         auto const key = line.substr(0, equals), value = line.substr(equals + 1);
         if (key == "client") settings_.clientPath = value;
         else if (key == "locale") settings_.locale = value;
+        else if (key == "font_size") { try { settings_.fontSize = std::clamp(std::stoi(value), 14, 64); } catch (...) {} }
+        else if (key == "window_width") { try { settings_.windowWidth = std::clamp(std::stoi(value), 1280, 7680); } catch (...) {} }
+        else if (key == "window_height") { try { settings_.windowHeight = std::clamp(std::stoi(value), 720, 4320); } catch (...) {} }
         else if (key == "host") settings_.database.host = value;
         else if (key == "port") { try { settings_.database.port = static_cast<std::uint16_t>(std::stoi(value)); } catch (...) {} }
         else if (key == "user") settings_.database.user = value;
@@ -801,6 +893,9 @@ void EditorApp::LoadSettings()
     }
     Copy(clientPath_, settings_.clientPath); Copy(locale_, settings_.locale); Copy(dbHost_, settings_.database.host);
     Copy(dbUser_, settings_.database.user); Copy(dbName_, settings_.database.database); dbPort_ = settings_.database.port;
+    fontSize_ = settings_.fontSize;
+    windowWidth_ = settings_.windowWidth;
+    windowHeight_ = settings_.windowHeight;
     settingsLoaded_ = true;
 }
 
@@ -811,6 +906,9 @@ void EditorApp::SaveSettings()
     std::filesystem::create_directories(path.parent_path());
     std::ofstream file(path, std::ios::trunc);
     file << "client=" << settings_.clientPath << '\n' << "locale=" << settings_.locale << '\n'
+         << "font_size=" << settings_.fontSize << '\n'
+         << "window_width=" << settings_.windowWidth << '\n'
+         << "window_height=" << settings_.windowHeight << '\n'
          << "host=" << settings_.database.host << '\n' << "port=" << settings_.database.port << '\n'
          << "user=" << settings_.database.user << '\n' << "database=" << settings_.database.database << '\n';
 }

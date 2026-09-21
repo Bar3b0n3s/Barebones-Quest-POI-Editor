@@ -58,6 +58,9 @@ struct AppSettings
 {
     std::string clientPath;
     std::string locale = "enUS";
+    int fontSize = 14;
+    int windowWidth = 1600;
+    int windowHeight = 900;
     DatabaseSettings database;
 };
 
