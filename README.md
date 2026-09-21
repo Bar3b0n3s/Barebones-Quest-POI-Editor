@@ -2,6 +2,8 @@
 
 A focused Windows and Linux editor for the `quest_poi` and `quest_poi_points` tables used by TrinityCore 3.3.5a. It reads map data from a local WoW 3.3.5a client and deliberately does not modify any other quest data.
 
+![Barebones Quest POI Editor interface](assets/pictures/App.png)
+
 ## Features
 
 - Browse every quest in the connected world database.
