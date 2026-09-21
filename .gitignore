@@ -409,3 +409,6 @@ FodyWeavers.xsd
 
 # Generated StormLib build tree.
 /tools/StormLib-build/
+
+
+/build
