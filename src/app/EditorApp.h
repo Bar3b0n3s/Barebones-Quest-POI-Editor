@@ -55,6 +55,7 @@ private:
     void Undo();
     void Redo();
     void RestoreQuest(Quest snapshot);
+    void FitSelectedPoiToMovement();
     bool LoadMap(std::uint32_t worldMapAreaId, std::uint32_t floor);
     bool UploadMap(RgbaImage const& image);
     void ReleaseMapTexture();

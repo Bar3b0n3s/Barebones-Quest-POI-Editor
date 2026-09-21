@@ -30,11 +30,65 @@ struct Poi
     bool operator==(Poi const&) const = default;
 };
 
+enum class RequirementKind
+{
+    Creature,
+    GameObject,
+    Item,
+    PlayerKills,
+    ExplorationOrEvent,
+    ObjectiveText
+};
+
+enum class SpawnKind
+{
+    Creature,
+    GameObject
+};
+
+struct MovementPoint
+{
+    float x = 0.0f;
+    float y = 0.0f;
+
+    bool operator==(MovementPoint const&) const = default;
+};
+
+struct QuestSpawn
+{
+    SpawnKind kind = SpawnKind::Creature;
+    std::uint32_t entry = 0;
+    std::string name;
+    std::uint32_t mapId = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    std::uint32_t movementType = 0;
+    float wanderDistance = 0.0f;
+    std::uint32_t pathId = 0;
+    std::vector<MovementPoint> pathPoints;
+
+    bool operator==(QuestSpawn const&) const = default;
+};
+
+struct QuestRequirement
+{
+    RequirementKind kind = RequirementKind::ObjectiveText;
+    std::int32_t objectiveIndex = -1;
+    std::uint32_t entry = 0;
+    std::uint32_t count = 0;
+    std::string name;
+    std::string objectiveText;
+    std::vector<QuestSpawn> spawns;
+
+    bool operator==(QuestRequirement const&) const = default;
+};
+
 struct Quest
 {
     std::uint32_t id = 0;
     std::string title;
     std::vector<Poi> pois;
+    std::vector<QuestRequirement> requirements;
 
     bool operator==(Quest const&) const = default;
 };

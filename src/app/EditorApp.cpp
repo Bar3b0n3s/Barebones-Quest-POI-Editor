@@ -154,6 +154,99 @@ float DistanceSquared(ImVec2 a, ImVec2 b)
     return x * x + y * y;
 }
 
+struct WorldSample
+{
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+float Cross(WorldSample const& origin, WorldSample const& a, WorldSample const& b)
+{
+    return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+}
+
+std::vector<WorldSample> ConvexHull(std::vector<WorldSample> samples)
+{
+    std::ranges::sort(samples, [](WorldSample const& a, WorldSample const& b) {
+        return a.x < b.x || (a.x == b.x && a.y < b.y);
+    });
+    auto const uniqueEnd = std::ranges::unique(samples, [](WorldSample const& a, WorldSample const& b) {
+        return a.x == b.x && a.y == b.y;
+    }).begin();
+    samples.erase(uniqueEnd, samples.end());
+    if (samples.size() < 3)
+        return samples;
+
+    std::vector<WorldSample> hull;
+    hull.reserve(samples.size() * 2);
+    for (auto const& point : samples)
+    {
+        while (hull.size() >= 2 && Cross(hull[hull.size() - 2], hull.back(), point) <= 0.0f)
+            hull.pop_back();
+        hull.push_back(point);
+    }
+    auto const lowerSize = hull.size();
+    for (auto iterator = samples.rbegin() + 1; iterator != samples.rend(); ++iterator)
+    {
+        while (hull.size() > lowerSize && Cross(hull[hull.size() - 2], hull.back(), *iterator) <= 0.0f)
+            hull.pop_back();
+        hull.push_back(*iterator);
+    }
+    if (!hull.empty())
+        hull.pop_back();
+    return hull;
+}
+
+char const* RequirementTypeName(RequirementKind kind)
+{
+    switch (kind)
+    {
+        case RequirementKind::Creature: return "Creature";
+        case RequirementKind::GameObject: return "Game object";
+        case RequirementKind::Item: return "Item";
+        case RequirementKind::PlayerKills: return "PvP";
+        case RequirementKind::ExplorationOrEvent: return "Explore/event";
+        case RequirementKind::ObjectiveText: return "Objective";
+    }
+    return "Requirement";
+}
+
+std::string RequirementSummary(QuestRequirement const& requirement)
+{
+    if (!requirement.objectiveText.empty())
+        return requirement.objectiveText;
+    if (requirement.count > 0)
+        return std::format("{} x {}", requirement.count, requirement.name);
+    return requirement.name;
+}
+
+bool RequirementAppliesToPoi(QuestRequirement const& requirement, Poi const& poi)
+{
+    return requirement.objectiveIndex == poi.objectiveIndex;
+}
+
+std::string PoiRequirementLabel(Quest const& quest, Poi const& poi)
+{
+    std::vector<std::string> lines;
+    for (auto const& requirement : quest.requirements)
+    {
+        if (!RequirementAppliesToPoi(requirement, poi))
+            continue;
+        auto summary = RequirementSummary(requirement);
+        if (!summary.empty() && std::ranges::find(lines, summary) == lines.end())
+            lines.push_back(std::move(summary));
+    }
+    auto label = std::format("POI {}", poi.id);
+    if (poi.objectiveIndex >= 0)
+        label += std::format(" - Objective {}", poi.objectiveIndex + 1);
+    auto const displayed = std::min<std::size_t>(lines.size(), 3);
+    for (std::size_t index = 0; index < displayed; ++index)
+        label += "\n" + lines[index];
+    if (lines.size() > displayed)
+        label += std::format("\n+{} more", lines.size() - displayed);
+    return label;
+}
+
 bool FuzzyTokenMatches(std::string const& text, std::string_view token)
 {
     auto position = text.begin();
@@ -323,6 +416,31 @@ void EditorApp::RenderPoiPanel()
         ImGui::TextColored({ 1.0f, 0.72f, 0.25f, 1.0f }, "Unsaved changes");
     }
     ImGui::TextWrapped("%s", quest_.title.empty() ? "(title unavailable)" : quest_.title.c_str());
+    ImGui::SeparatorText("Requirements");
+    auto const* requirementPoi = selectedPoi_ >= 0 && selectedPoi_ < static_cast<int>(quest_.pois.size())
+        ? &quest_.pois[selectedPoi_] : nullptr;
+    auto displayedRequirement = false;
+    for (auto const& requirement : quest_.requirements)
+    {
+        if (!requirementPoi || !RequirementAppliesToPoi(requirement, *requirementPoi))
+            continue;
+        displayedRequirement = true;
+        auto prefix = requirement.objectiveIndex >= 0
+            ? std::format("Objective {} - {}", requirement.objectiveIndex + 1, RequirementTypeName(requirement.kind))
+            : std::string(RequirementTypeName(requirement.kind));
+        auto summary = RequirementSummary(requirement);
+        ImGui::BulletText("%s: %s", prefix.c_str(), summary.empty() ? "(unnamed)" : summary.c_str());
+        if (!requirement.objectiveText.empty() && requirement.objectiveText != requirement.name)
+            ImGui::TextDisabled("  Target: %s (entry %u)", requirement.name.c_str(), requirement.entry);
+        else if (requirement.entry != 0)
+            ImGui::TextDisabled("  Entry %u", requirement.entry);
+        if (!requirement.spawns.empty())
+            ImGui::TextDisabled("  %zu individual spawn marker%s", requirement.spawns.size(), requirement.spawns.size() == 1 ? "" : "s");
+    }
+    if (!requirementPoi)
+        ImGui::TextDisabled("Select a POI group to view its requirements.");
+    else if (!displayedRequirement)
+        ImGui::TextDisabled("No structured requirements are linked to this POI group.");
     ImGui::SeparatorText("POIs");
     for (std::size_t index = 0; index < quest_.pois.size(); ++index)
     {
@@ -428,6 +546,10 @@ void EditorApp::RenderPoiPanel()
         LoadMap(poi.worldMapAreaId, poi.floor);
 
     ImGui::SeparatorText("Points");
+    if (ImGui::Button("Fit POI to spawns + movement"))
+        FitSelectedPoiToMovement();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Replace this POI's points with an undoable area around its visible spawns, wander radii, and waypoint routes.");
     ImGui::TextWrapped("Left-click the map to add. Drag a handle to move it. Right-click a handle to remove it.");
     for (std::size_t index = 0; index < poi.points.size(); ++index)
     {
@@ -533,7 +655,8 @@ void EditorApp::RenderCanvas()
         mapPanY_ = 0.0f;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("Zoom %.0f%%  |  Wheel: zoom  |  Middle-drag: pan", mapZoom_ * 100.0f);
+    ImGui::TextDisabled("Zoom %.0f%%  |  Wheel: zoom  |  Middle-drag: pan  |  Orange: NPC  |  Green: object",
+        mapZoom_ * 100.0f);
 
     auto available = ImGui::GetContentRegionAvail();
     if (available.x < 1.0f || available.y < 1.0f)
@@ -601,11 +724,98 @@ void EditorApp::RenderCanvas()
     else if (screenPoints.size() >= 3)
         draw->AddConcavePolyFilled(screenPoints.data(), static_cast<int>(screenPoints.size()), fill);
 
+    QuestSpawn const* hoveredSpawn = nullptr;
+    for (auto const& requirement : quest_.requirements)
+    {
+        if (!RequirementAppliesToPoi(requirement, poi))
+            continue;
+        for (auto const& spawn : requirement.spawns)
+        {
+            if (spawn.mapId != area->mapId)
+                continue;
+            auto const mapWidth = area->right - area->left;
+            auto const mapHeight = area->bottom - area->top;
+            if (std::abs(mapWidth) < 0.001f || std::abs(mapHeight) < 0.001f)
+                continue;
+            auto const normalizedX = (spawn.y - area->left) / mapWidth;
+            auto const normalizedY = (spawn.x - area->top) / mapHeight;
+            if (normalizedX < 0.0f || normalizedX > 1.0f || normalizedY < 0.0f || normalizedY > 1.0f)
+                continue;
+            auto const position = CanvasPoint(origin, size, { normalizedX, normalizedY });
+            auto worldPosition = [&](float x, float y) {
+                return CanvasPoint(origin, size, { (y - area->left) / mapWidth, (x - area->top) / mapHeight });
+            };
+            if (spawn.kind == SpawnKind::Creature && spawn.movementType == 1 && spawn.wanderDistance > 0.0f)
+            {
+                std::array<ImVec2, 32> ring {};
+                constexpr auto twoPi = 6.2831853071795864769f;
+                for (std::size_t index = 0; index < ring.size(); ++index)
+                {
+                    auto const angle = twoPi * static_cast<float>(index) / static_cast<float>(ring.size());
+                    ring[index] = worldPosition(spawn.x + std::cos(angle) * spawn.wanderDistance,
+                        spawn.y + std::sin(angle) * spawn.wanderDistance);
+                }
+                draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), IM_COL32(245, 150, 35, 150),
+                    ImDrawFlags_Closed, 1.5f);
+            }
+            if (spawn.kind == SpawnKind::Creature && spawn.pathPoints.size() >= 2)
+            {
+                std::vector<ImVec2> path;
+                path.reserve(spawn.pathPoints.size());
+                for (auto const& point : spawn.pathPoints)
+                    path.push_back(worldPosition(point.x, point.y));
+                draw->AddPolyline(path.data(), static_cast<int>(path.size()), IM_COL32(245, 150, 35, 185),
+                    ImDrawFlags_None, 2.0f);
+            }
+            if (spawn.kind == SpawnKind::Creature)
+            {
+                draw->AddCircleFilled(position, 4.0f, IM_COL32(245, 150, 35, 235), 12);
+                draw->AddCircle(position, 5.0f, IM_COL32(80, 40, 5, 255), 12, 1.0f);
+            }
+            else
+            {
+                draw->AddRectFilled({ position.x - 4.0f, position.y - 4.0f },
+                    { position.x + 4.0f, position.y + 4.0f }, IM_COL32(55, 205, 105, 235));
+                draw->AddRect({ position.x - 5.0f, position.y - 5.0f },
+                    { position.x + 5.0f, position.y + 5.0f }, IM_COL32(5, 70, 25, 255));
+            }
+            if (itemHovered && DistanceSquared(mouse, position) <= 100.0f)
+                hoveredSpawn = &spawn;
+        }
+    }
+
     for (std::size_t index = 0; index < screenPoints.size(); ++index)
     {
         draw->AddCircleFilled(screenPoints[index], selectedPoint_ == static_cast<int>(index) ? 3.5f : 2.5f,
             selectedPoint_ == static_cast<int>(index) ? IM_COL32(255, 105, 105, 255) : IM_COL32(225, 35, 45, 255));
         draw->AddCircle(screenPoints[index], 4.5f, IM_COL32(90, 8, 16, 245), 16, 1.0f);
+    }
+
+    auto const& labeledPoi = poi;
+    if (labeledPoi.worldMapAreaId == loadedArea_ && labeledPoi.floor == loadedFloor_ && !labeledPoi.points.empty())
+    {
+        ImVec2 center {};
+        for (auto const& point : labeledPoi.points)
+        {
+            auto const position = CanvasPoint(origin, size, area->WorldToNormalized(point));
+            center.x += position.x;
+            center.y += position.y;
+        }
+        center.x /= static_cast<float>(labeledPoi.points.size());
+        center.y /= static_cast<float>(labeledPoi.points.size());
+        auto const label = PoiRequirementLabel(quest_, labeledPoi);
+        auto const textSize = ImGui::CalcTextSize(label.c_str());
+        auto labelPosition = ImVec2 { center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f };
+        if (labeledPoi.points.size() == 1)
+            labelPosition.y -= textSize.y * 0.5f + 13.0f;
+        auto const padding = ImVec2 { 5.0f, 3.0f };
+        draw->AddRectFilled({ labelPosition.x - padding.x, labelPosition.y - padding.y },
+            { labelPosition.x + textSize.x + padding.x, labelPosition.y + textSize.y + padding.y },
+            IM_COL32(12, 18, 27, 210), 3.0f);
+        draw->AddRect({ labelPosition.x - padding.x, labelPosition.y - padding.y },
+            { labelPosition.x + textSize.x + padding.x, labelPosition.y + textSize.y + padding.y },
+            IM_COL32(95, 135, 185, 235), 3.0f);
+        draw->AddText(labelPosition, IM_COL32(245, 248, 252, 255), label.c_str());
     }
     draw->PopClipRect();
 
@@ -629,7 +839,7 @@ void EditorApp::RenderCanvas()
             selectedPoint_ = hovered;
             pointDragActive_ = false;
         }
-        else if (mouse.x >= origin.x && mouse.x <= origin.x + size.x &&
+        else if (!hoveredSpawn && mouse.x >= origin.x && mouse.x <= origin.x + size.x &&
                  mouse.y >= origin.y && mouse.y <= origin.y + size.y)
         {
             RecordUndo(quest_);
@@ -656,6 +866,20 @@ void EditorApp::RenderCanvas()
     {
         auto const& point = poi.points[hovered];
         ImGui::BeginTooltip(); ImGui::Text("Point %d: %d, %d", hovered, point.x, point.y); ImGui::EndTooltip();
+    }
+    else if (hoveredSpawn)
+    {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(hoveredSpawn->kind == SpawnKind::Creature ? "Creature spawn" : "Game-object spawn");
+        ImGui::Text("%s (entry %u)", hoveredSpawn->name.c_str(), hoveredSpawn->entry);
+        ImGui::Text("Map %u: %.1f, %.1f", hoveredSpawn->mapId, hoveredSpawn->x, hoveredSpawn->y);
+        if (hoveredSpawn->movementType == 1 && hoveredSpawn->wanderDistance > 0.0f)
+            ImGui::Text("Random movement: %.1f-yard radius", hoveredSpawn->wanderDistance);
+        else if (!hoveredSpawn->pathPoints.empty())
+            ImGui::Text("Waypoint path %u: %zu nodes", hoveredSpawn->pathId, hoveredSpawn->pathPoints.size());
+        else if (hoveredSpawn->kind == SpawnKind::Creature)
+            ImGui::TextUnformatted("Stationary spawn");
+        ImGui::EndTooltip();
     }
 }
 
@@ -803,11 +1027,14 @@ void EditorApp::RenderInfo()
         ImGui::BulletText("Use the left-side name and ID fields to fuzzy-search the quest list.");
         ImGui::BulletText("Click a quest in the list. Its POIs and map load automatically.");
         ImGui::BulletText("Use ID ascending/descending to change the list order.");
+        ImGui::BulletText("Select a POI group to show only its linked requirements, label, and spawn markers.");
+        ImGui::BulletText("Orange circles mark individual NPC spawns; green squares mark individual game-object spawns.");
 
         ImGui::SeparatorText("Edit POIs and points");
         ImGui::BulletText("Use the right-side panel to add, delete, select, and configure POIs.");
         ImGui::BulletText("Left-click the map to add a point. Drag a point to move it.");
         ImGui::BulletText("Right-click a point to remove it. Three or more points shade the enclosed area.");
+        ImGui::BulletText("Fit POI to spawns + movement builds an undoable area around stationary spawns, wander radii, and waypoint routes.");
         ImGui::BulletText("Use Ctrl+Z to undo and Ctrl+Y or Ctrl+Shift+Z to redo POI edits.");
         ImGui::BulletText("Unsaved changes are marked and protected when switching quests, disconnecting, or exiting.");
 
@@ -1130,7 +1357,11 @@ void EditorApp::LoadQuest(std::uint32_t questId)
     redoHistory_.clear();
     pointDragActive_ = false;
     SelectPoi(quest_.pois.empty() ? -1 : 0);
-    SetStatus(std::format("Loaded quest {} with {} POI record(s).", quest_.id, quest_.pois.size()));
+    auto spawnCount = std::size_t { 0 };
+    for (auto const& requirement : quest_.requirements)
+        spawnCount += requirement.spawns.size();
+    SetStatus(std::format("Loaded quest {} with {} POI record(s), {} requirement(s), and {} spawn marker(s).",
+        quest_.id, quest_.pois.size(), quest_.requirements.size(), spawnCount));
 }
 
 bool EditorApp::SaveQuest()
@@ -1150,9 +1381,11 @@ bool EditorApp::SaveQuest()
 void EditorApp::RecordUndo(Quest const& snapshot)
 {
     constexpr std::size_t maximumHistory = 100;
-    if (undoHistory_.empty() || undoHistory_.back() != snapshot)
+    auto editableSnapshot = snapshot;
+    editableSnapshot.requirements.clear();
+    if (undoHistory_.empty() || undoHistory_.back() != editableSnapshot)
     {
-        undoHistory_.push_back(snapshot);
+        undoHistory_.push_back(std::move(editableSnapshot));
         if (undoHistory_.size() > maximumHistory)
             undoHistory_.erase(undoHistory_.begin());
     }
@@ -1161,7 +1394,10 @@ void EditorApp::RecordUndo(Quest const& snapshot)
 
 void EditorApp::RestoreQuest(Quest snapshot)
 {
+    auto requirements = std::move(quest_.requirements);
     quest_ = std::move(snapshot);
+    if (quest_.requirements.empty())
+        quest_.requirements = std::move(requirements);
     pointDragActive_ = false;
     if (quest_.pois.empty())
     {
@@ -1178,7 +1414,9 @@ void EditorApp::Undo()
 {
     if (undoHistory_.empty())
         return;
-    redoHistory_.push_back(quest_);
+    auto redoSnapshot = quest_;
+    redoSnapshot.requirements.clear();
+    redoHistory_.push_back(std::move(redoSnapshot));
     auto snapshot = std::move(undoHistory_.back());
     undoHistory_.pop_back();
     RestoreQuest(std::move(snapshot));
@@ -1189,11 +1427,118 @@ void EditorApp::Redo()
 {
     if (redoHistory_.empty())
         return;
-    undoHistory_.push_back(quest_);
+    auto undoSnapshot = quest_;
+    undoSnapshot.requirements.clear();
+    undoHistory_.push_back(std::move(undoSnapshot));
     auto snapshot = std::move(redoHistory_.back());
     redoHistory_.pop_back();
     RestoreQuest(std::move(snapshot));
     SetStatus("Restored the last undone POI edit.");
+}
+
+void EditorApp::FitSelectedPoiToMovement()
+{
+    if (selectedPoi_ < 0 || selectedPoi_ >= static_cast<int>(quest_.pois.size()))
+        return;
+    auto const* area = CurrentArea();
+    if (!area)
+    {
+        SetStatus("The selected POI does not have a valid world-map area.", true);
+        return;
+    }
+
+    auto& poi = quest_.pois[selectedPoi_];
+    std::vector<WorldSample> samples;
+    constexpr auto sampleCount = 16;
+    constexpr auto twoPi = 6.2831853071795864769f;
+    constexpr auto markerPadding = 10.0f;
+    auto insideArea = [area](float x, float y) {
+        auto const width = area->right - area->left;
+        auto const height = area->bottom - area->top;
+        if (std::abs(width) < 0.001f || std::abs(height) < 0.001f)
+            return false;
+        auto const nx = (y - area->left) / width;
+        auto const ny = (x - area->top) / height;
+        return nx >= 0.0f && nx <= 1.0f && ny >= 0.0f && ny <= 1.0f;
+    };
+    auto addFootprint = [&](float x, float y, float radius) {
+        if (!insideArea(x, y))
+            return;
+        for (auto index = 0; index < sampleCount; ++index)
+        {
+            auto const angle = twoPi * static_cast<float>(index) / static_cast<float>(sampleCount);
+            samples.push_back({ x + std::cos(angle) * radius, y + std::sin(angle) * radius });
+        }
+    };
+
+    std::size_t includedSpawns = 0;
+    std::size_t includedPaths = 0;
+    for (auto const& requirement : quest_.requirements)
+    {
+        if (!RequirementAppliesToPoi(requirement, poi))
+            continue;
+        for (auto const& spawn : requirement.spawns)
+        {
+            if (spawn.mapId != area->mapId)
+                continue;
+            auto const before = samples.size();
+            auto const radius = spawn.movementType == 1
+                ? std::max(markerPadding, spawn.wanderDistance + markerPadding)
+                : markerPadding;
+            addFootprint(spawn.x, spawn.y, radius);
+            if (!spawn.pathPoints.empty())
+            {
+                auto pathIncluded = false;
+                for (auto const& point : spawn.pathPoints)
+                {
+                    auto const previousSize = samples.size();
+                    addFootprint(point.x, point.y, markerPadding);
+                    pathIncluded = pathIncluded || samples.size() != previousSize;
+                }
+                if (pathIncluded)
+                    ++includedPaths;
+            }
+            if (samples.size() != before)
+                ++includedSpawns;
+        }
+    }
+    if (samples.empty())
+    {
+        SetStatus("No spawn or movement data for the selected POI is inside this world-map area.", true);
+        return;
+    }
+
+    auto const hull = ConvexHull(std::move(samples));
+    if (hull.size() < 3)
+    {
+        SetStatus("The selected POI's movement data could not form an area.", true);
+        return;
+    }
+    std::vector<Point> fittedPoints;
+    fittedPoints.reserve(hull.size());
+    for (auto const& sample : hull)
+    {
+        auto const width = area->right - area->left;
+        auto const height = area->bottom - area->top;
+        auto const nx = std::clamp((sample.y - area->left) / width, 0.0f, 1.0f);
+        auto const ny = std::clamp((sample.x - area->top) / height, 0.0f, 1.0f);
+        auto point = area->NormalizedToWorld(nx, ny);
+        if (fittedPoints.empty() || fittedPoints.back() != point)
+            fittedPoints.push_back(point);
+    }
+    if (fittedPoints.size() > 1 && fittedPoints.front() == fittedPoints.back())
+        fittedPoints.pop_back();
+    if (fittedPoints.size() < 3)
+    {
+        SetStatus("The selected POI's movement area collapsed to fewer than three map points.", true);
+        return;
+    }
+
+    RecordUndo(quest_);
+    poi.points = std::move(fittedPoints);
+    selectedPoint_ = -1;
+    SetStatus(std::format("Fitted POI {} to {} spawn(s) and {} waypoint path(s) using {} boundary points.",
+        poi.id, includedSpawns, includedPaths, poi.points.size()));
 }
 
 void EditorApp::SelectPoi(int index)

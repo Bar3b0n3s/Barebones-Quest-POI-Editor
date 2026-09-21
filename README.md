@@ -9,6 +9,10 @@ A focused Windows and Linux editor for the `quest_poi` and `quest_poi_points` ta
 - Browse every quest in the connected world database.
 - Fuzzy-search quests by name and ID, with ascending or descending ID order.
 - Load a quest and its map automatically by selecting it in the browser.
+- Show every structured quest requirement, including creature/game-object objectives, required items, player kills, exploration/events, and objective text.
+- When a POI group is selected, show only its associated requirements and label, with its individual NPC spawns as orange circles and game-object spawns as green squares.
+- Visualize random wander radii and waypoint routes, then fit the selected POI to its spawns and movement using an explicit undoable action.
+- Resolve direct objective spawns, creature kill-credit aliases, and item sources recorded in `creature_questitem` and `gameobject_questitem`.
 - Reconstruct the fully revealed map by alpha-blending the client-defined subzone overlays over its fogged base tiles.
 - Add, delete, and configure POIs and their ordered points.
 - Choose named maps and world-map areas from client-data dropdowns while preserving the original numeric POI flag value.
@@ -82,6 +86,10 @@ The application has three resizable panes:
 - **Right:** the loaded quest, POIs, fields, and ordered points.
 
 Select a quest on the left to load it automatically. Select or add a POI on the right, choose its map when necessary, and edit points directly on the map.
+
+Selecting a POI group filters the right pane and map to that group's requirements. The selected POI receives a centered label describing its linked objective; orange circles are its individual NPC spawns and green squares are its individual game-object spawns. Hover a marker to see its name, entry, map, and coordinates. Quest-wide requirements are shown only when a quest-wide POI (`ObjectiveIndex = -1`) is selected.
+
+**Fit POI to spawns + movement** replaces the selected POI's points with a boundary around its relevant spawn positions. Random-moving creatures contribute their configured wander radius, and waypoint-moving creatures contribute their route nodes. A small margin is included around stationary spawns and waypoint routes. The operation is explicit, is included in undo/redo history, and does not save until **Save to database** is chosen. Script-controlled movement that is not represented by database wander or waypoint data cannot be inferred reliably.
 
 Map controls:
 
