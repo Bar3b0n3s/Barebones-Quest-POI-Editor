@@ -17,13 +17,14 @@ if ((Test-Path -LiteralPath $packageRoot) -or (Test-Path -LiteralPath $archivePa
 }
 
 $licenses = Join-Path $packageRoot 'LICENSES'
-New-Item -ItemType Directory -Force -Path $licenses | Out-Null
+$pictures = Join-Path $packageRoot 'assets\pictures'
+New-Item -ItemType Directory -Force -Path $licenses, $pictures | Out-Null
 foreach ($file in 'QuestPoiEditor.exe', 'StormLib.dll', 'AtkinsonHyperlegibleNext-Medium.ttf',
     'quest-poi-editor-icon.png', 'libmysql.dll', 'libssl-3-x64.dll', 'libcrypto-3-x64.dll') {
     Copy-Item -LiteralPath (Join-Path $projectRoot "bin\$Configuration\$file") -Destination $packageRoot
 }
-Copy-Item -LiteralPath 'packaging\README-Windows.txt' -Destination (Join-Path $packageRoot 'README.txt')
 Copy-Item -LiteralPath 'README.md', 'THIRD_PARTY_NOTICES.md' -Destination $packageRoot
+Copy-Item -LiteralPath 'assets\pictures\App.png' -Destination $pictures
 Copy-Item -LiteralPath 'vendor\imgui\LICENSE.txt' -Destination (Join-Path $licenses 'Dear-ImGui-MIT.txt')
 Copy-Item -LiteralPath 'vendor\glfw\LICENSE.md' -Destination (Join-Path $licenses 'GLFW-zlib.txt')
 Copy-Item -LiteralPath 'tools\StormLib\LICENSE' -Destination (Join-Path $licenses 'StormLib-MIT.txt')
